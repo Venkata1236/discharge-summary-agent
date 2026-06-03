@@ -7,6 +7,13 @@ from PIL import Image
 
 
 # ─────────────────────────────────────────────
+# CLIENT — created once at module level
+# ─────────────────────────────────────────────
+
+client = anthropic.Anthropic()
+
+
+# ─────────────────────────────────────────────
 # CLAUDE VISION FALLBACK
 # ─────────────────────────────────────────────
 
@@ -37,7 +44,6 @@ def run_vision(pdf_path: str, page_num: int) -> str:
         img_b64 = base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
 
         # Send to Claude Vision
-        client = anthropic.Anthropic()
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=2000,
