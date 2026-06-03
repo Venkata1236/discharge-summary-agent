@@ -16,141 +16,128 @@ client = anthropic.Anthropic()
 
 def med_reconciliation_node(state: AgentState) -> AgentState:
     """
-    Compares admission medications vs discharge medications.
-    Flags:
-    - New medications added at discharge
-    - Medications stopped without explanation
-    - Dose changes without explanation
-    - Any unexplained change
-    Never assumes a change is intentional — always flags for clinician.
+    Compares admission vs discharge medications using deterministic
+    Python set logic — no LLM involved in the comparison itself.
+    LLM is only used for the final narrative summary line.
+    Flags: added, stopped, dose_changed, unexplained.
     """
 
     state.trace.append({
         "step": state.step_count,
         "node": "med_reconciliation",
-        "action": "comparing admission vs discharge medications",
+        "action": "comparing admission vs discharge medications (deterministic)",
     })
 
     print(f"[MED RECONCILIATION] Comparing admission vs discharge meds...")
 
-    # Get medication lists from state
-    admission_meds = [m.model_dump() for m in state.summary.admission_medications]
-    discharge_meds = [m.model_dump() for m in state.summary.discharge_medications]
+    admission_meds = state.summary.admission_medications
+    discharge_meds = state.summary.discharge_medications
 
-    # If either list is empty — flag and skip
+    # ── Guard: missing lists ──
     if not admission_meds and not discharge_meds:
-        msg = "RECONCILIATION SKIPPED - Both admission and discharge medication lists are missing"
-        state.summary.flags.append(msg)
-        print(f"[MED RECONCILIATION] ⚠ {msg}")
-        state = _advance_plan(state)
-        state.step_count += 1
-        return state
+        _flag(state, "RECONCILIATION SKIPPED - Both medication lists missing")
+        return _done(state)
 
     if not admission_meds:
-        msg = "RECONCILIATION INCOMPLETE - Admission medications missing — cannot compare"
-        state.summary.flags.append(msg)
-        print(f"[MED RECONCILIATION] ⚠ {msg}")
-        state = _advance_plan(state)
-        state.step_count += 1
-        return state
+        _flag(state, "RECONCILIATION INCOMPLETE - Admission medications missing")
+        return _done(state)
 
     if not discharge_meds:
-        msg = "RECONCILIATION INCOMPLETE - Discharge medications missing — cannot compare"
-        state.summary.flags.append(msg)
-        print(f"[MED RECONCILIATION] ⚠ {msg}")
-        state = _advance_plan(state)
-        state.step_count += 1
-        return state
+        _flag(state, "RECONCILIATION INCOMPLETE - Discharge medications missing")
+        return _done(state)
 
-    prompt = f"""
-You are a clinical pharmacist performing medication reconciliation.
+    # ── Build lookup dicts keyed by lowercase med name ──
+    admission_map = {
+        m.name.strip().lower(): m for m in admission_meds
+        if m.name != MISSING
+    }
+    discharge_map = {
+        m.name.strip().lower(): m for m in discharge_meds
+        if m.name != MISSING
+    }
 
-ADMISSION MEDICATIONS:
-{json.dumps(admission_meds, indent=2)}
+    admission_names = set(admission_map.keys())
+    discharge_names = set(discharge_map.keys())
 
-DISCHARGE MEDICATIONS:
-{json.dumps(discharge_meds, indent=2)}
+    changes = []
 
-Compare the two lists carefully and identify ALL changes.
+    # ── Added: in discharge but not admission ──
+    for name in discharge_names - admission_names:
+        med = discharge_map[name]
+        changes.append(MedicationChange(
+            medication=med.name,
+            change_type="added",
+            note=f"New at discharge — {med.dose} {med.frequency} {med.route}".strip()
+        ))
+        print(f"[MED RECONCILIATION] + ADDED: {med.name}")
 
-For each change classify it as one of:
-- "added"         → new medication at discharge not present at admission
-- "stopped"       → admission medication not continued at discharge
-- "dose_changed"  → same medication but different dose or frequency
-- "unexplained"   → change exists but reason cannot be determined from the data
+    # ── Stopped: in admission but not discharge ──
+    for name in admission_names - discharge_names:
+        med = admission_map[name]
+        changes.append(MedicationChange(
+            medication=med.name,
+            change_type="stopped",
+            note=f"Present at admission but not at discharge — {med.dose} {med.frequency}".strip()
+        ))
+        flag = f"UNEXPLAINED STOP - {med.name} not continued at discharge — Clinician Review Required"
+        state.summary.flags.append(flag)
+        print(f"[MED RECONCILIATION] ⚠ STOPPED: {med.name}")
 
-Rules:
-- Flag ALL changes — do not assume any change is intentional
-- If a medication appears in both lists with same dose/frequency → it is unchanged, do not include
-- If reason for change is not explicitly stated in the data → mark as "unexplained"
-- Never invent reasons for changes
+    # ── Dose/frequency changed: in both but different values ──
+    for name in admission_names & discharge_names:
+        a = admission_map[name]
+        d = discharge_map[name]
 
-Return ONLY valid JSON:
-{{
-    "medication_changes": [
-        {{
-            "medication": "medication name",
-            "change_type": "added | stopped | dose_changed | unexplained",
-            "note": "brief description of the change"
-        }}
-    ],
-    "reconciliation_summary": "one line summary of overall changes"
-}}
-"""
-
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
+        dose_changed = (
+            a.dose != MISSING and d.dose != MISSING and a.dose != d.dose
+        )
+        freq_changed = (
+            a.frequency != MISSING and d.frequency != MISSING
+            and a.frequency != d.frequency
         )
 
-        raw = response.content[0].text.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw)
-
-        changes = result.get("medication_changes", [])
-        summary_line = result.get("reconciliation_summary", "")
-
-        # Store changes in state
-        state.summary.medication_changes = [
-            MedicationChange(**c) for c in changes
-        ]
-
-        # Flag unexplained changes
-        unexplained = [c for c in changes if c.get("change_type") == "unexplained"]
-        for u in unexplained:
-            flag = f"UNEXPLAINED MED CHANGE - {u.get('medication')}: {u.get('note')} — Clinician Review Required"
+        if dose_changed or freq_changed:
+            note = f"Admission: {a.dose} {a.frequency} → Discharge: {d.dose} {d.frequency}"
+            changes.append(MedicationChange(
+                medication=a.name,
+                change_type="dose_changed",
+                note=note.strip()
+            ))
+            flag = f"UNEXPLAINED DOSE CHANGE - {a.name}: {note} — Clinician Review Required"
             state.summary.flags.append(flag)
-            print(f"[MED RECONCILIATION] ⚠ {flag}")
+            print(f"[MED RECONCILIATION] ⚠ DOSE CHANGED: {a.name}")
 
-        print(f"[MED RECONCILIATION] ✓ {len(changes)} change(s) found — {len(unexplained)} unexplained")
-        print(f"[MED RECONCILIATION] Summary: {summary_line}")
+    # Store all changes
+    state.summary.medication_changes = changes
 
-        state.trace.append({
-            "step": state.step_count,
-            "node": "med_reconciliation",
-            "result": f"{len(changes)} medication change(s) identified",
-            "changes": changes,
-            "summary": summary_line
-        })
+    unexplained_count = sum(
+        1 for c in changes if c.change_type in ("stopped", "dose_changed")
+    )
 
-    except Exception as e:
-        print(f"[MED RECONCILIATION] ✗ Failed: {e}")
-        state.errors.append(f"med_reconciliation failed: {e}")
+    print(f"[MED RECONCILIATION] ✓ {len(changes)} change(s) — {unexplained_count} flagged")
 
-    # Advance plan
-    state = _advance_plan(state)
-    state.step_count += 1
-    return state
+    state.trace.append({
+        "step": state.step_count,
+        "node": "med_reconciliation",
+        "result": f"{len(changes)} change(s), {unexplained_count} flagged",
+        "changes": [c.model_dump() for c in changes]
+    })
+
+    return _done(state)
 
 
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
 
-def _advance_plan(state: AgentState) -> AgentState:
+def _flag(state: AgentState, msg: str) -> None:
+    state.summary.flags.append(msg)
+    print(f"[MED RECONCILIATION] ⚠ {msg}")
+
+
+def _done(state: AgentState) -> AgentState:
     if state.plan:
         state.plan.pop(0)
     state.current_task = state.plan[0] if state.plan else "format_output"
+    state.step_count += 1
     return state
