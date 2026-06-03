@@ -67,6 +67,7 @@ def run_ocr(pdf_path: str, page_num: int) -> str:
         text = pytesseract.image_to_string(img, lang="eng", config=custom_config)
 
         print(f"[OCR] ✓ Page {page_num + 1} — {len(text.strip())} chars extracted")
+        text = text.replace("\x0c", "").strip()
         return text
 
     except Exception as e:
