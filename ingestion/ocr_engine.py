@@ -1,0 +1,1 @@
+pytesseract.pytesseract.tesseract_cmd = os.getenv("TESSERACT_PATH")
