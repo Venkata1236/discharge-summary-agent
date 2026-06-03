@@ -1,0 +1,9 @@
+langgraph
+langchain-anthropic
+pytesseract
+pdf2image
+Pillow
+pymupdf
+pydantic
+python-dotenv
+pytest
