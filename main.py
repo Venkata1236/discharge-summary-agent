@@ -83,7 +83,7 @@ def main():
 
     try:
         final_state = graph.invoke(initial_state)
-        print(f"\n[MAIN] ✓ Agent completed in {final_state.step_count} steps")
+        print(f"\n[MAIN] ✓ Agent completed successfully")
 
     except Exception as e:
         print(f"\n[MAIN] ✗ Agent failed: {e}")
