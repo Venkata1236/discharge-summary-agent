@@ -22,7 +22,10 @@ def route_task(state: AgentState) -> str:
 
     # ── Hard step cap — never run forever ──
     if state.step_count >= state.max_steps:
-        print(f"\n[GRAPH] ⚠ Step cap reached ({state.max_steps}) — forcing output")
+        if state.step_cap_reached:
+            print(f"\n[GRAPH] ⚠ Step cap already handled — forcing output_formatter")
+            return "output_formatter"
+        print(f"\n[GRAPH] ⚠ Step cap reached ({state.max_steps}) — forcing safety guardrail")
         return "safety_guardrail"
 
     # ── Agent complete ──
