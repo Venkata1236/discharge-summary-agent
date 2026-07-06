@@ -4,6 +4,7 @@ import anthropic
 from pdf2image import convert_from_path
 from io import BytesIO
 from PIL import Image
+from agents.config import MODEL_NAME
 
 
 # ─────────────────────────────────────────────
@@ -45,7 +46,7 @@ def run_vision(pdf_path: str, page_num: int) -> str:
 
         # Send to Claude Vision
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=MODEL_NAME,
             max_tokens=2000,
             messages=[
                 {
