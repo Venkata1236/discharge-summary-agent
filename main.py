@@ -4,9 +4,9 @@ import argparse
 from dotenv import load_dotenv
 
 from ingestion.pdf_loader import load_patient_pdfs
+from ingestion.page_classifier import classify_pages
 from agents.state import AgentState, DischargeSummary
 from agents.graph import build_graph
-
 
 # ─────────────────────────────────────────────
 # LOAD ENV
@@ -67,10 +67,16 @@ def main():
 
     print(f"[MAIN] ✓ Ingested {len(raw_text)} PDF file(s)\n")
 
-    # ── Step 2: Build initial state ──
+    # ── Step 2: Classify pages by clinical document type ──
+    print("[MAIN] Classifying pages...")
+    classified_pages = classify_pages(raw_text)
+    print()
+
+    # ── Step 3: Build initial state ──
     initial_state = AgentState(
         patient_folder=args.patient,
         raw_text=raw_text,
+        classified_pages=classified_pages,
         summary=DischargeSummary(),
         max_steps=args.max_steps
     )
