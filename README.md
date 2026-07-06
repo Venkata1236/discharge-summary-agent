@@ -1,59 +1,80 @@
 # Discharge Summary Agent
 
-An agentic AI system that reads messy scanned clinical PDFs and produces
-structured, safe discharge summary drafts for clinician review.
+An agentic AI system that reads messy, real-world hospital records — scanned notes, drug charts, lab reports, handwritten nursing documentation — and turns them into a structured, standardized discharge summary draft for clinician review.
 
-Built as a take-home assignment for Dscribe (Unriddle Technologies).
-
----
-
-## Demo
-
-> Agent running live on Patient 2 — flags conflicts, reconciles medications, enforces no-fabrication rule.
-
-*(Loom link here after recording)*
+Hospitals generate a lot of inconsistent paperwork during a patient's stay. This agent reads all of it, extracts the key clinical facts, and assembles a proper discharge summary — without ever guessing. If something isn't clearly stated in the records, it's marked as missing instead of fabricated, and every medication change or cross-document contradiction is flagged before anything is considered ready for a doctor's sign-off.
 
 ---
 
 ## What It Does
 
-- Ingests scanned clinical PDFs using a hybrid pipeline (PyMuPDF → Tesseract OCR → Claude Vision)
-- Runs a LangGraph agent loop that plans, extracts, reconciles, and flags — step by step
-- Never fabricates clinical facts — missing fields are explicitly marked
-- Detects conflicts between notes and flags them without picking sides
-- Reconciles admission vs discharge medications using deterministic Python logic
-- Calls mock tools only when needed — drug interaction lookup, flag for review, pending checker
-- Emits a full step-by-step agent trace alongside the discharge summary
-- Enforces a hard 25-step cap — agent cannot run forever
+- Ingests scanned, typed, and handwritten clinical PDFs using a hybrid extraction pipeline
+- Classifies pages by clinical type and routes only relevant content to each extraction step
+- Extracts patient demographics, diagnoses, hospital course, procedures, medications, and lab results
+- Never fabricates a clinical fact — missing fields are explicitly marked `[MISSING - Clinician Review Required]`
+- Reconciles admission vs. discharge medications using deterministic logic, flagging unexplained changes
+- Detects contradictions between documents and surfaces both versions rather than picking one
+- Calls tools only when needed — drug interaction checks, escalation, pending result review
+- Runs through two interchangeable pipelines: a multi-agent orchestrator (default) or a dynamic LangGraph planner (legacy)
+- Emits a full step-by-step trace and a numbered list of every flag requiring clinician review
+- Always outputs a draft — never auto-finalizes a discharge summary
 
 ---
 
 ## Architecture
 
-**Step 1 — Ingestion**
+```
+Patient PDFs
+    ↓
+[1] Ingestion (hybrid text extraction)
+    ↓
+[2] Page Classification (tag each page by type)
+    ↓
+[3] Agent Pipeline (two interchangeable implementations)
+    ↓
+[4] Output Formatter (structured JSON + flags + trace)
+```
 
-Patient PDF folder is read page by page using a hybrid pipeline:
-- PyMuPDF first — fast, works if digital text layer exists
-- Tesseract OCR fallback — for printed scanned pages
-- Claude Vision fallback — for handwritten nursing notes and messy charts
+### Layer 1 — Ingestion
 
-**Step 2 — Agent Loop (max 25 steps)**
+Each page runs through a three-tier extraction cascade:
 
-The agent plans, executes, and re-plans after every step.
+1. **PyMuPDF** pulls the digital text layer directly — fast and free, used whenever the text passes a content quality check (not just a length check, since short text like `BP: 87/50` is clinically critical despite being tiny)
+2. If that fails, a lightweight **handwriting pre-check** (Claude Vision, single yes/no call) decides whether the page is handwritten. If so, it skips OCR entirely and goes straight to full Vision transcription — Tesseract tends to produce garbled-but-plausible text on handwriting, which is more dangerous than a clean failure
+3. Otherwise, **Tesseract OCR** runs first, falling back to full **Claude Vision** transcription only if OCR's output fails the same quality check
 
-| Node | What It Does |
-|------|-------------|
-| Planner | LLM decides what to extract next — re-plans every step |
-| Extractor | Fills demographics, diagnoses, meds, procedures, hospital course |
-| Conflict Detector | Cross-checks all notes — flags contradictions, never picks sides |
-| Med Reconciliation | Deterministic Python set logic — flags stopped, changed, added meds |
-| Tool Caller | Agent decides when to call drug interaction, flag review, pending checker |
-| Safety Guardrail | Deterministic — no LLM — missing fields get `[MISSING - Clinician Review Required]` |
-| Output Formatter | Structured JSON discharge summary + full agent trace printed to terminal |
+Every page is tagged with a marker (`[PAGE N - OCR]`, `[PAGE N - VISION]`, etc.) that the next layer depends on.
 
-**Step 3 — Output**
+### Layer 2 — Page Classification
 
-Structured JSON discharge summary and step-by-step agent trace printed to terminal.
+Each page is tagged with a clinical type — discharge summary, drug chart, lab report, nursing notes, consultation sheet, and so on — from a short preview. Downstream extraction steps request only the page types relevant to their task (medication extraction only needs drug charts, not the entire document), which replaced an earlier version that sent the full document to every single extraction call. If classification finds nothing relevant for a task, it falls back to sending everything rather than silently sending an empty string.
+
+### Layer 3 — Agent Pipeline
+
+Everything passes through a single state object (`AgentState`) holding raw text, classified pages, the working discharge summary, and a trace log. The summary itself uses explicit `MISSING` / `PENDING` sentinel values instead of `None` or empty strings — the core design principle throughout is **never fabricate, always mark the gap explicitly**.
+
+Two pipelines are available, selected via a flag:
+
+**Multi-agent orchestrator (default)**
+A fixed sequence of four domain-specialized agents, each wrapping tested logic rather than reimplementing it:
+- `NarrativeAgent` — demographics, diagnoses, hospital course, procedures
+- `MedicationAgent` — extracts admission/discharge medications, then runs deterministic reconciliation
+- `LabAgent` — extracts lab and imaging results
+- `SafetyAgent` — runs conflict detection, tool calling, then the final deterministic safety guardrail
+
+**Legacy LangGraph planner/router** (`--legacy-graph`)
+The original design — an LLM planner re-plans after every step, and a router dispatches to whichever node the plan calls for next, looping until complete. This is dynamic and adaptive; the orchestrator is not — it always runs the same four steps in the same order. Both are kept intentionally: the orchestrator gives clean separation of concerns per clinical domain, the legacy graph gives genuine runtime re-planning. Neither is strictly better.
+
+### The Core Safety Split — LLM vs. Deterministic
+
+This is the most important design decision in the project, and it holds across both pipelines:
+
+- **LLM-dependent**: anything that turns unstructured text into structured fields (demographics, diagnoses, medications, labs) — there's no deterministic way to parse free-text clinical notes
+- **Zero-LLM, pure Python**: medication reconciliation (set comparison between medication lists) and the safety guardrail (field-presence checks, unconditional draft disclaimer) — these are the two places where correctness matters most and hallucination risk is least acceptable, which is also why they're the only nodes with dedicated unit tests
+
+### Layer 4 — Output
+
+Pure formatting, no LLM involved. Produces the final structured JSON (demographics, medications, conflicts, flags), prints the full step-by-step trace, and lists every flag requiring clinician sign-off before the summary could be used in practice.
 
 ---
 
@@ -61,9 +82,9 @@ Structured JSON discharge summary and step-by-step agent trace printed to termin
 
 | Layer | Tool |
 |-------|------|
-| Agent loop | LangGraph |
-| LLM | Claude Sonnet `claude-sonnet-4-20250514` |
-| PDF ingestion | PyMuPDF + Tesseract OCR + Claude Vision fallback |
+| Agent orchestration | Custom multi-agent orchestrator + LangGraph (legacy) |
+| LLM | Claude Sonnet (Anthropic API) |
+| PDF ingestion | PyMuPDF + Tesseract OCR + Claude Vision |
 | Validation | Pydantic |
 | Config | python-dotenv |
 | Tests | pytest |
@@ -74,31 +95,38 @@ Structured JSON discharge summary and step-by-step agent trace printed to termin
 
 ```
 discharge-summary-agent/
-├── main.py
+├── main.py                          # Entry point — orchestrator by default, --legacy-graph for the LangGraph path
 ├── requirements.txt
 ├── .env.example
+│
 ├── agents/
-│   ├── state.py
-│   ├── graph.py
+│   ├── state.py                     # AgentState + DischargeSummary models, MISSING/PENDING sentinels
+│   ├── orchestrator.py              # Multi-agent coordinator (default pipeline)
+│   ├── narrative_agent.py           # Demographics, diagnoses, hospital course, procedures
+│   ├── medication_agent.py          # Medication extraction + reconciliation
+│   ├── lab_agent.py                 # Lab and imaging result extraction
+│   ├── safety_agent.py              # Conflict detection, tool calling, safety guardrail
+│   ├── graph.py                     # Legacy LangGraph — router, step cap, conditional edges
 │   └── nodes/
-│       ├── planner.py
-│       ├── extractor.py
-│       ├── conflict_detector.py
-│       ├── med_reconciliation.py
-│       ├── tool_caller.py
-│       ├── safety_guardrail.py
-│       └── output_formatter.py
+│       ├── planner.py               # Legacy — LLM-driven dynamic task planning
+│       ├── extractor.py             # Legacy — field extraction, never fabricates
+│       ├── conflict_detector.py     # Cross-note contradiction detection
+│       ├── med_reconciliation.py    # Deterministic admission vs. discharge diff
+│       ├── tool_caller.py           # Agent-decided tool invocation
+│       ├── safety_guardrail.py      # No-fabrication enforcement (deterministic)
+│       └── output_formatter.py      # Structured JSON + trace to terminal
+│
 ├── tools/
-│   ├── drug_interaction.py
-│   ├── flag_review.py
-│   └── pending_checker.py
+│   ├── drug_interaction.py          # Drug interaction lookup with severity levels
+│   ├── flag_review.py               # Clinician escalation tool
+│   └── pending_checker.py           # Pending result checker
+│
 ├── ingestion/
-│   ├── pdf_loader.py
-│   ├── ocr_engine.py
-│   └── vision_fallback.py
-├── output/
-│   ├── formatter.py
-│   └── trace_logger.py
+│   ├── pdf_loader.py                # Hybrid extraction orchestrator
+│   ├── page_classifier.py           # Page type classification and task-based routing
+│   ├── ocr_engine.py                # Tesseract with image preprocessing
+│   └── vision_fallback.py           # Claude Vision transcription + handwriting pre-check
+│
 └── tests/
     ├── test_safety_guardrail.py
     ├── test_conflict_detector.py
@@ -116,7 +144,7 @@ git clone https://github.com/Venkata1236/discharge-summary-agent.git
 cd discharge-summary-agent
 ```
 
-**2. Create and activate virtual environment**
+**2. Create and activate a virtual environment**
 
 ```bash
 python -m venv venv
@@ -143,7 +171,12 @@ pip install -r requirements.txt
 Windows — download the installer from:
 https://github.com/UB-Mannheim/tesseract/wiki
 
-**5. Configure environment**
+**5. Install Poppler (system-level, required for PDF-to-image conversion)**
+
+Windows — download from:
+https://github.com/oschwartz10612/poppler-windows/releases
+
+**6. Configure environment**
 
 ```bash
 cp .env.example .env
@@ -156,7 +189,7 @@ ANTHROPIC_API_KEY=your_api_key_here
 TESSERACT_PATH=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
-**6. Add patient PDFs**
+**7. Add patient PDFs**
 
 ```
 data/
@@ -171,16 +204,19 @@ data/
 
 ## Run
 
+**Default — multi-agent orchestrator**
 ```bash
 python main.py --patient data/patients/patient_2
 ```
 
+**Legacy — LangGraph planner/router**
 ```bash
-python main.py --patient data/patients/patient_1
+python main.py --patient data/patients/patient_2 --legacy-graph
 ```
 
+**Custom step cap (legacy pipeline only)**
 ```bash
-python main.py --patient data/patients/patient_2 --max-steps 30
+python main.py --patient data/patients/patient_2 --legacy-graph --max-steps 30
 ```
 
 ---
@@ -192,20 +228,19 @@ python main.py --patient data/patients/patient_2 --max-steps 30
   DISCHARGE SUMMARY AGENT
 ============================================================
   Patient folder : data/patients/patient_2
-  Max steps      : 25
 ============================================================
 
 [INGESTION] Processing: admission_note.pdf
-[INGESTION] Page 1 → trying OCR
-[INGESTION] Page 2 → Vision fallback
-[INGESTION] ✓ Extracted 4821 chars
+[INGESTION] Page 1 → digital text layer
+[INGESTION] Page 2 → handwriting detected, routing to Vision
+[CLASSIFIER] Task 'extract_admission_medications' → 4 relevant page(s)
 
-[PLANNER] Plan: ['extract_demographics', 'extract_diagnoses', ...]
-[EXTRACTOR] Task: extract_demographics
-[CONFLICT DETECTOR] ⚠ CONFLICT in 'age_sex': '45/M' vs '45/F'
-[MED RECONCILIATION] ⚠ STOPPED: Metformin 500mg — Clinician Review Required
-[TOOL CALLER] Calling: flag_for_review
-[SAFETY GUARDRAIL] 🚨 CRITICAL - Allergy status unknown
+[NARRATIVE AGENT] Extracting demographics, diagnoses, hospital course...
+[MEDICATION AGENT] Comparing admission vs. discharge meds (deterministic)...
+[MEDICATION AGENT] ⚠ STOPPED: Metformin 500mg — Clinician Review Required
+[LAB AGENT] Extracting lab and imaging results...
+[SAFETY AGENT] ⚠ CONFLICT in 'allergies': 'NKDA' vs 'Penicillin allergy'
+[SAFETY AGENT] 🚨 CRITICAL - Allergy status conflict — Clinician Review Required
 
 ============================================================
   DISCHARGE SUMMARY
@@ -215,10 +250,8 @@ python main.py --patient data/patients/patient_2 --max-steps 30
     "status": "DRAFT - Clinician Review Required",
     "total_flags": 6
   },
-  "patient_demographics": {
-    "name": "...",
-    "age_sex": "CONFLICT - Clinician Review Required"
-  }
+  "patient_demographics": { "..." },
+  ...
 }
 ```
 
@@ -229,66 +262,32 @@ python main.py --patient data/patients/patient_2 --max-steps 30
 Three layers enforce the no-fabrication rule:
 
 **Layer 1 — Extraction**
-The extractor prompt explicitly instructs the LLM to return
-`[MISSING - Clinician Review Required]` for any field not found
-in the source document. Guessing is not permitted.
+Every extraction prompt explicitly instructs the model to return `[MISSING - Clinician Review Required]` for any field not found in the source document. Guessing is not permitted.
 
 **Layer 2 — Conflict Detection**
-When two documents disagree on the same fact, both versions
-are preserved and flagged. The system never picks one version
-over the other.
+When two documents disagree on the same fact, both versions are preserved and flagged. The system never picks one version over the other.
 
 **Layer 3 — Safety Guardrail**
-A deterministic final node with no LLM sweeps every field before
-output. Any empty or blank field is replaced with
-`[MISSING - Clinician Review Required]`. This node runs on every
-execution path including step-cap exits and cannot be bypassed.
+A deterministic final pass with no LLM involvement sweeps every field before output. Any empty, null, or blank field is replaced with `[MISSING - Clinician Review Required]`. This step runs on every execution path and cannot be bypassed — it always appends a `DRAFT ONLY` disclaimer to the output.
 
 ---
 
-## Known Limitations and Production Improvements
+## Design Principles
 
-**1. Full text sent to each extraction call**
+- **Never fabricate.** Every field is either sourced from the documents or explicitly marked missing.
+- **Deterministic where correctness matters most.** Medication reconciliation and the safety guardrail use plain Python, not an LLM — there's no acceptable hallucination risk in either.
+- **Route, don't dump.** Extraction steps receive only the page types relevant to their task, not the entire document on every call.
+- **Preserve contradictions, don't resolve them.** Conflicting information is surfaced with both versions and their sources, never silently picked between.
+- **Always a draft.** No output is ever final. Every run ends with an explicit clinician sign-off requirement.
 
-Current: all PDF pages are sent to every extractor call.
+---
 
-Production fix: a page classifier node routes only relevant
-sections to each extractor — medication charts to med extractor only.
+## Known Limitations and Future Improvements
 
-Impact: ~80% token reduction on large patient files.
-
-**2. Planner sees truncated document preview**
-
-Current: planner receives first 3000 chars per document.
-
-Production fix: chunk-based retrieval where planner sees chunk
-summaries and fetches relevant chunks on demand.
-
-Impact: full document awareness regardless of file length.
-
-**3. Conflict detector sends full raw text**
-
-Current: full text sent for conflict detection.
-
-Production fix: compare only pre-extracted field values and
-their source snippets instead of entire documents.
-
-Impact: ~95% token reduction with same detection quality.
-
-**4. Mock tools**
-
-Current: drug interaction, flag review, and pending checker
-are mock implementations.
-
-Production fix: integrate real clinical databases such as
-DrugBank API, hospital EMR system, and lab result feeds.
-
-**5. No persistent storage**
-
-Current: output is terminal only.
-
-Production fix: store summaries in PostgreSQL with full
-audit trail — who generated, which version, clinician edits.
+- **Mock tools** — drug interaction lookup, escalation, and pending result checks are illustrative implementations. Production use would integrate a real source such as a DrugBank API or hospital EMR feed.
+- **Fixed orchestrator sequence** — the multi-agent pipeline runs the same four steps in the same order every time, unlike the legacy planner which re-plans dynamically. A future version could combine both — specialized agents with dynamic sequencing.
+- **No persistent storage** — output is terminal-only. A production version would log summaries with a full audit trail (who generated it, which pipeline version, what a clinician edited).
+- **Page classification is preview-based** — pages are classified from a short text preview, which could misclassify unusually formatted documents. A production version might use full-page context or a fine-tuned classifier.
 
 ---
 
@@ -298,12 +297,12 @@ audit trail — who generated, which version, clinician edits.
 pytest tests/ -v
 ```
 
+Tests cover the deterministic components specifically — medication reconciliation and the safety guardrail — since these are the modules where correctness is most critical and easiest to verify without mocking an LLM.
+
 ---
 
 ## Author
 
 Venkat Reddy
 AI/ML Engineer
-bommavaramvenkat2003@gmail.com
-linkedin.com/in/venkatareddy1203
 github.com/Venkata1236
