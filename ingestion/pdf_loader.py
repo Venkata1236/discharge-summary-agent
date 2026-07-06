@@ -1,7 +1,7 @@
 import fitz  # PyMuPDF
 from pathlib import Path
 from ingestion.ocr_engine import run_ocr
-from ingestion.vision_fallback import run_vision
+from ingestion.vision_fallback import run_vision, looks_handwritten
 
 
 # ─────────────────────────────────────────────
@@ -83,18 +83,28 @@ def extract_pdf(pdf_path: str) -> str:
             full_text.append(f"[PAGE {page_num + 1} - DIGITAL]\n{digital_text}")
 
         else:
-            # Scanned page — try Tesseract OCR first
-            print(f"[INGESTION] Page {page_num + 1} → trying OCR")
-            ocr_text = run_ocr(pdf_path, page_num)
-
-            if is_meaningful_text(ocr_text):
-                full_text.append(f"[PAGE {page_num + 1} - OCR]\n{ocr_text}")
-
-            else:
-                # OCR not confident enough — Claude Vision fallback
-                print(f"[INGESTION] Page {page_num + 1} → Vision fallback")
+            # Scanned page — check for handwriting before trying OCR.
+            # Tesseract can produce garbled-but-plausible text on handwritten
+            # content, which passes is_meaningful_text() but is factually
+            # wrong — worse than a clean failure. Route handwriting straight
+            # to Vision instead.
+            if looks_handwritten(pdf_path, page_num):
+                print(f"[INGESTION] Page {page_num + 1} → looks handwritten, going straight to Vision")
                 vision_text = run_vision(pdf_path, page_num)
                 full_text.append(f"[PAGE {page_num + 1} - VISION]\n{vision_text}")
+
+            else:
+                print(f"[INGESTION] Page {page_num + 1} → trying OCR")
+                ocr_text = run_ocr(pdf_path, page_num)
+
+                if is_meaningful_text(ocr_text):
+                    full_text.append(f"[PAGE {page_num + 1} - OCR]\n{ocr_text}")
+
+                else:
+                    # OCR not confident enough — Claude Vision fallback
+                    print(f"[INGESTION] Page {page_num + 1} → Vision fallback")
+                    vision_text = run_vision(pdf_path, page_num)
+                    full_text.append(f"[PAGE {page_num + 1} - VISION]\n{vision_text}")
 
     doc.close()
     return "\n\n".join(full_text)
