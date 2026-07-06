@@ -87,6 +87,7 @@ Example: ["extract_diagnoses", "reconcile_medications", "apply_safety_guardrail"
     )
 
     raw = response.content[0].text.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
 
     try:
         plan = json.loads(raw)
