@@ -82,6 +82,9 @@ class AgentState(BaseModel):
     # Ingestion output — {filename: extracted_text}
     raw_text: dict[str, str] = Field(default_factory=dict)
 
+    # Page classifier output — {page_type: [page_text, page_text, ...]}
+    classified_pages: dict[str, list[str]] = Field(default_factory=dict)
+
     # Working summary — updated by each node
     summary: DischargeSummary = Field(default_factory=DischargeSummary)
 
