@@ -2,6 +2,7 @@ import json
 import anthropic
 from agents.state import AgentState, Medication, MISSING, PENDING
 from agents.config import MODEL_NAME
+from ingestion.page_classifier import get_pages_for_task
 
 
 # ─────────────────────────────────────────────
@@ -22,7 +23,13 @@ def extractor_node(state: AgentState) -> AgentState:
     """
 
     task = state.current_task
-    full_text = _combine_raw_text(state.raw_text)
+
+    # Use only the pages relevant to this task instead of the full document.
+    # Fall back to the full combined text if classification found nothing
+    # (e.g. classifier failed, or classified_pages wasn't populated).
+    full_text = get_pages_for_task(state.classified_pages, task)
+    if not full_text:
+        full_text = _combine_raw_text(state.raw_text)
 
     state.trace.append({
         "step": state.step_count,
