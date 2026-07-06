@@ -1,6 +1,7 @@
 import json
 import anthropic
 from agents.state import AgentState
+from agents.config import MODEL_NAME
 
 
 # ─────────────────────────────────────────────
@@ -81,7 +82,7 @@ Example: ["extract_diagnoses", "reconcile_medications", "apply_safety_guardrail"
 """
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=MODEL_NAME,
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
