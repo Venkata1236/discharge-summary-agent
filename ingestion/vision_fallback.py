@@ -15,6 +15,60 @@ client = anthropic.Anthropic()
 
 
 # ─────────────────────────────────────────────
+# HANDWRITING PRE-CHECK
+# ─────────────────────────────────────────────
+
+def looks_handwritten(pdf_path: str, page_num: int) -> bool:
+    """
+    Cheap pre-check to decide whether a page should skip Tesseract entirely
+    and go straight to Claude Vision. Tesseract can produce garbled-but-
+    plausible-looking text on handwriting, which is worse than a clean
+    failure — this catches that case before OCR ever runs.
+    """
+    try:
+        images = convert_from_path(
+            pdf_path,
+            first_page=page_num + 1,
+            last_page=page_num + 1,
+            dpi=150          # low DPI is enough for a yes/no classification — saves tokens
+        )
+        if not images:
+            return False
+
+        buffer = BytesIO()
+        images[0].save(buffer, format="JPEG", quality=70)
+        img_b64 = base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
+
+        response = client.messages.create(
+            model=MODEL_NAME,
+            max_tokens=10,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img_b64
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "Is this page primarily handwritten (not printed/typed)? Answer only yes or no."
+                    }
+                ]
+            }]
+        )
+        answer = response.content[0].text.strip().lower()
+        return "yes" in answer
+
+    except Exception as e:
+        print(f"[VISION] Handwriting pre-check failed on page {page_num + 1}, assuming printed: {e}")
+        return False
+
+
+# ─────────────────────────────────────────────
 # CLAUDE VISION FALLBACK
 # ─────────────────────────────────────────────
 
