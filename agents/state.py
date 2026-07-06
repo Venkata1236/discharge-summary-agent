@@ -58,6 +58,9 @@ class DischargeSummary(BaseModel):
     discharge_medications: list[Medication] = Field(default_factory=list)
     medication_changes: list[MedicationChange] = Field(default_factory=list)
 
+    # Labs
+    lab_results: list[dict] = Field(default_factory=list)
+
     # Safety
     allergies: str = MISSING
     discharge_condition: str = MISSING
