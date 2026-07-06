@@ -7,6 +7,7 @@ from ingestion.pdf_loader import load_patient_pdfs
 from ingestion.page_classifier import classify_pages
 from agents.state import AgentState, DischargeSummary
 from agents.graph import build_graph
+from agents.orchestrator import run_orchestrator
 
 # ─────────────────────────────────────────────
 # LOAD ENV
@@ -34,6 +35,11 @@ def parse_args():
         type=int,
         default=25,
         help="Maximum agent steps before forced termination (default: 25)"
+    )
+    parser.add_argument(
+        "--legacy-graph",
+        action="store_true",
+        help="Use the original LangGraph planner/router pipeline instead of the multi-agent orchestrator"
     )
     return parser.parse_args()
 
@@ -81,14 +87,17 @@ def main():
         max_steps=args.max_steps
     )
 
-    # ── Step 3: Build and run graph ──
-    print("[MAIN] Building agent graph...")
-    graph = build_graph()
-
-    print("[MAIN] Running agent...\n")
-
+    # ── Step 4: Run the agent — orchestrator by default, legacy graph on request ──
     try:
-        final_state = graph.invoke(initial_state)
+        if args.legacy_graph:
+            print("[MAIN] Building legacy LangGraph pipeline (planner/router)...")
+            graph = build_graph()
+            print("[MAIN] Running agent...\n")
+            final_state = graph.invoke(initial_state)
+        else:
+            print("[MAIN] Running multi-agent orchestrator (Narrative -> Medication -> Lab -> Safety)...\n")
+            final_state = run_orchestrator(initial_state)
+
         print(f"\n[MAIN] ✓ Agent completed successfully")
 
     except Exception as e:
