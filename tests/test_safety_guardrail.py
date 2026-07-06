@@ -9,7 +9,7 @@ def test_missing_fields_get_flagged():
         patient_folder="test",
         summary=DischargeSummary(
             patient_name="",
-            allergies=None,
+            allergies="",
             discharge_condition=""
         )
     )
