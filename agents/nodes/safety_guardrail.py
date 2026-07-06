@@ -26,6 +26,11 @@ def safety_guardrail_node(state: AgentState) -> AgentState:
 
     print(f"[SAFETY GUARDRAIL] Running safety checks...")
 
+    # Mark that the step cap forced this run, so the router sends the
+    # NEXT loop straight to output_formatter instead of back here forever.
+    if state.step_count >= state.max_steps:
+        state.step_cap_reached = True
+
     summary = state.summary
     issues_found = 0
 
