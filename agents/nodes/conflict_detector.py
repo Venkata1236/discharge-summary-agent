@@ -1,6 +1,7 @@
 import json
 import anthropic
 from agents.state import AgentState, MISSING
+from agents.config import MODEL_NAME
 
 
 # ─────────────────────────────────────────────
@@ -74,7 +75,7 @@ Return ONLY valid JSON:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=MODEL_NAME,
             max_tokens=2000,
             messages=[{"role": "user", "content": prompt}]
         )
