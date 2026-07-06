@@ -89,6 +89,7 @@ class AgentState(BaseModel):
     step_count: int = 0
     max_steps: int = 25
     is_complete: bool = False
+    step_cap_reached: bool = False
 
     # Planner output
     plan: list[str] = Field(default_factory=list)
