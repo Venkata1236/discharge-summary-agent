@@ -111,6 +111,7 @@ def get_pages_for_task(classified: dict[str, list[str]], task: str) -> str:
         "extract_procedures":            ["discharge_summary", "procedure_chart", "nursing_notes"],
         "extract_admission_medications": ["drug_chart", "admission_note"],
         "extract_discharge_medications": ["discharge_summary", "drug_chart"],
+        "extract_lab_results":           ["lab_report", "imaging_report"],
         "detect_conflicts":              ["discharge_summary", "lab_report", "admission_note"],
         "check_pending_results":         ["lab_report", "discharge_summary"],
     }
