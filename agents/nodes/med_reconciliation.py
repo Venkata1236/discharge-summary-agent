@@ -33,18 +33,19 @@ def med_reconciliation_node(state: AgentState) -> AgentState:
     admission_meds = state.summary.admission_medications
     discharge_meds = state.summary.discharge_medications
 
-    # ── Guard: missing lists ──
+    # ── Guard: both missing — nothing at all to compare ──
     if not admission_meds and not discharge_meds:
         _flag(state, "RECONCILIATION SKIPPED - Both medication lists missing")
         return _done(state)
 
+    # ── One list missing — flag it, but still run the comparison below.
+    #    An empty list is valid input to the set logic; bailing out here
+    #    would hide real "added"/"stopped" changes on the side that IS present. ──
     if not admission_meds:
-        _flag(state, "RECONCILIATION INCOMPLETE - Admission medications missing")
-        return _done(state)
+        _flag(state, "RECONCILIATION INCOMPLETE - Admission medications missing — cannot confirm which discharge meds are newly started vs continued")
 
     if not discharge_meds:
-        _flag(state, "RECONCILIATION INCOMPLETE - Discharge medications missing")
-        return _done(state)
+        _flag(state, "RECONCILIATION INCOMPLETE - Discharge medications missing — cannot confirm which admission meds were stopped")
 
     # ── Build lookup dicts keyed by lowercase med name ──
     admission_map = {
