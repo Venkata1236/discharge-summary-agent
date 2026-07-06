@@ -115,7 +115,10 @@ If no tools are needed, return:
                 })
                 if tool_result.get("interactions"):
                     for interaction in tool_result["interactions"]:
-                        flag = f"DRUG INTERACTION ALERT - {interaction} — Clinician Review Required"
+                        severity = interaction.get("severity", "unknown").upper()
+                        pair = interaction.get("pair", "unknown pair")
+                        note = interaction.get("note", "")
+                        flag = f"DRUG INTERACTION ALERT ({severity}) - {pair}: {note} — Clinician Review Required"
                         state.summary.flags.append(flag)
                         print(f"[TOOL CALLER] ⚠ {flag}")
 
