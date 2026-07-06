@@ -1,10 +1,10 @@
 import json
 import anthropic
 from agents.state import AgentState
+from agents.config import MODEL_NAME
 from tools.drug_interaction import check_drug_interactions
 from tools.flag_review import flag_for_review
 from tools.pending_checker import check_pending_results
-
 
 # ─────────────────────────────────────────────
 # CLIENT — created once at module level
@@ -76,7 +76,7 @@ If no tools are needed, return:
 
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=MODEL_NAME,
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
