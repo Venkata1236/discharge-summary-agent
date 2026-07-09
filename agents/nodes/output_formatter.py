@@ -46,7 +46,8 @@ def output_formatter_node(state: AgentState) -> AgentState:
             "ward": summary.ward,
         },
         "diagnoses": {
-            "principal": summary.principal_diagnosis,
+            "principal": summary.principal_diagnosis.model_dump(),
+            "principal_icd10": summary.principal_diagnosis_icd10,
             "secondary": summary.secondary_diagnoses or [],
         },
         "clinical": {
