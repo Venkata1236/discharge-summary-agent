@@ -28,6 +28,19 @@ class MedicationChange(BaseModel):
     note: str = MISSING
 
 
+class DiagnosisField(BaseModel):
+    """
+    Wraps principal_diagnosis with confidence + source citation.
+    Scoped to diagnosis only — not applied project-wide — to avoid
+    breaking the plain-string assumptions in safety_guardrail_node
+    and elsewhere.
+    """
+    value: str = MISSING
+    confidence: float = 0.0
+    source_page: int | None = None
+    source_snippet: str | None = None
+
+
 # ─────────────────────────────────────────────
 # DISCHARGE SUMMARY — final structured output
 # ─────────────────────────────────────────────
@@ -46,7 +59,8 @@ class DischargeSummary(BaseModel):
     ward: str = MISSING
 
     # Diagnoses
-    principal_diagnosis: str = MISSING
+    principal_diagnosis: DiagnosisField = Field(default_factory=DiagnosisField)
+    principal_diagnosis_icd10: dict = Field(default_factory=lambda: {"code": MISSING, "description": MISSING, "confidence": 0.0})
     secondary_diagnoses: list[str] = Field(default_factory=list)
 
     # Clinical course
