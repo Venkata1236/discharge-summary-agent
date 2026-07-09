@@ -76,7 +76,7 @@ Return ONLY valid JSON:
     try:
         response = client.messages.create(
             model=MODEL_NAME,
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
 

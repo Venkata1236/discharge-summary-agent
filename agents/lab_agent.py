@@ -64,7 +64,7 @@ Return ONLY valid JSON, no explanation:
         try:
             response = client.messages.create(
                 model=MODEL_NAME,
-                max_tokens=2000,
+                max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw = response.content[0].text.strip()
