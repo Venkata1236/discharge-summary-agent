@@ -3,17 +3,21 @@ import sys
 import argparse
 from dotenv import load_dotenv
 
+# ─────────────────────────────────────────────
+# LOAD ENV — must happen BEFORE any project imports below, since
+# several modules create their Anthropic client at import time
+# (module-level `client = anthropic.Anthropic()`), which reads the
+# API key immediately. If .env loads after those imports, the client
+# gets constructed with no key and stays broken for the whole run.
+# ─────────────────────────────────────────────
+
+load_dotenv()
+
 from ingestion.pdf_loader import load_patient_pdfs
 from ingestion.page_classifier import classify_pages
 from agents.state import AgentState, DischargeSummary
 from agents.graph import build_graph
 from agents.orchestrator import run_orchestrator
-
-# ─────────────────────────────────────────────
-# LOAD ENV
-# ─────────────────────────────────────────────
-
-load_dotenv()
 
 
 # ─────────────────────────────────────────────
