@@ -35,10 +35,12 @@ def safety_guardrail_node(state: AgentState) -> AgentState:
     issues_found = 0
 
     # ── 1. Check all string fields for None or empty ──
+    # NOTE: principal_diagnosis is NOT in this list — it's a DiagnosisField
+    # object now, not a plain string, and gets its own check below.
     string_fields = [
         "patient_name", "patient_id", "age_sex", "dob",
         "admission_date", "discharge_date", "consultant", "ward",
-        "principal_diagnosis", "hospital_course",
+        "hospital_course",
         "allergies", "discharge_condition"
     ]
 
@@ -50,6 +52,25 @@ def safety_guardrail_node(state: AgentState) -> AgentState:
             summary.flags.append(flag)
             print(f"[SAFETY GUARDRAIL] ⚠ {flag}")
             issues_found += 1
+
+    # ── 1b. Check principal_diagnosis (DiagnosisField) separately ──
+    LOW_CONFIDENCE_THRESHOLD = 0.6
+
+    diag = summary.principal_diagnosis
+    if not diag.value or diag.value.strip() == "":
+        diag.value = MISSING
+        flag = "MISSING FIELD - 'principal_diagnosis' could not be extracted — Clinician Review Required"
+        summary.flags.append(flag)
+        print(f"[SAFETY GUARDRAIL] ⚠ {flag}")
+        issues_found += 1
+    elif diag.confidence < LOW_CONFIDENCE_THRESHOLD:
+        flag = (
+            f"LOW CONFIDENCE - 'principal_diagnosis' extracted at "
+            f"{diag.confidence:.0%} confidence — Clinician Review Required"
+        )
+        summary.flags.append(flag)
+        print(f"[SAFETY GUARDRAIL] ⚠ {flag}")
+        issues_found += 1
 
     # ── 2. Check list fields for empty ──
     if not summary.secondary_diagnoses:
