@@ -34,3 +34,6 @@ Thumbs.db
 # Output files
 output/*.json
 output/*.log
+
+# Persisted audit trail runs — may contain patient-shaped data
+runs/
