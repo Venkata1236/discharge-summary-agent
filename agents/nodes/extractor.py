@@ -1,6 +1,6 @@
 import json
 import anthropic
-from agents.state import AgentState, Medication, MISSING, PENDING
+from agents.state import AgentState, Medication, DiagnosisField, MISSING, PENDING
 from agents.config import MODEL_NAME
 from ingestion.page_classifier import get_pages_for_task
 
@@ -129,15 +129,44 @@ CLINICAL TEXT:
 Extract the following fields exactly as they appear.
 If not found, return exactly: {MISSING}
 
+For the principal diagnosis specifically, also provide:
+- confidence: a score between 0.0 and 1.0 for how certain you are this value
+  is correct and unambiguous in the source text.
+    0.9-1.0: explicitly and unambiguously stated
+    0.6-0.89: stated but requires interpretation, or the source text is noisy (OCR/handwriting)
+    0.3-0.59: inferred from context, not explicitly stated
+    Below 0.3: highly uncertain — prefer returning {MISSING} as the value instead of a low-confidence guess
+- source_page: the page number where this was found, taken from the [PAGE N - ...] marker
+  in the text above. Use null if you cannot determine the page.
+- source_snippet: a short excerpt (under 15 words) from the source text supporting this diagnosis
+
 Return ONLY valid JSON:
 {{
-    "principal_diagnosis": "...",
+    "principal_diagnosis": {{
+        "value": "...",
+        "confidence": 0.0,
+        "source_page": 0,
+        "source_snippet": "..."
+    }},
     "secondary_diagnoses": ["...", "..."]
 }}
 """
     result = _call_llm(prompt)
     if result:
-        state.summary.principal_diagnosis = result.get("principal_diagnosis", MISSING)
+        diag = result.get("principal_diagnosis", {})
+        if isinstance(diag, dict):
+            state.summary.principal_diagnosis = DiagnosisField(
+                value=diag.get("value", MISSING),
+                confidence=diag.get("confidence", 0.0),
+                source_page=diag.get("source_page"),
+                source_snippet=diag.get("source_snippet"),
+            )
+        else:
+            # Model returned a plain string instead of the requested object —
+            # don't crash, just store it with zero confidence so the
+            # guardrail flags it for review rather than silently trusting it.
+            state.summary.principal_diagnosis = DiagnosisField(value=str(diag), confidence=0.0)
+
         state.summary.secondary_diagnoses = result.get("secondary_diagnoses", [])
 
         state.trace.append({
